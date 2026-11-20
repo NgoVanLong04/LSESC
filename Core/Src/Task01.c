@@ -6,6 +6,7 @@
 
 #include "hal_sensor.h"
 #include "bldc_6step.h"
+#include "hall_comm.h"
 #include "stm32_log.h"
 #include "usbd_cdc_if.h"
 #include "hal_adc.h"
@@ -97,8 +98,11 @@ void StartTask01(void *argument)
   bldc_init();
   taskEXIT_CRITICAL();
 //   phase_calib();
+  taskENTER_CRITICAL();
   last_phase = read_current_phase();
-  set_phase(last_phase, duty_a);
+  hall_comm_init();
+  hall_comm_refresh(duty_a);
+  taskEXIT_CRITICAL();
 
 
   for(;;)
@@ -109,11 +113,12 @@ void StartTask01(void *argument)
     	taskENTER_CRITICAL();
     	duty_a = cmd_duty >= 0.0f ? cmd_duty : -cmd_duty;
     	g_comm_dir = cmd_duty >= 0 ? 1 : -1;
-    	set_phase(last_phase, duty_a);
 		taskEXIT_CRITICAL();
     }
+    /* Applies the duty; commutation itself is done by the hall ISR / TIM2
+     * (hall_comm.c). While the motor is stopped this follows the sensor. */
     taskENTER_CRITICAL();
-    set_phase(read_current_phase(), duty_a);
+    hall_comm_refresh(duty_a);
     taskEXIT_CRITICAL();
     cpm = hall_speed_erpm();
     LOGI("SPEED", "%0.2f", cpm);

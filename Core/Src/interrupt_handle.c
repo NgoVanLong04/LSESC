@@ -3,6 +3,7 @@
 #include "hal_adc.h"
 #include "math.h"
 #include "bldc_6step.h"
+#include "hall_comm.h"
 
 extern ADC_HandleTypeDef hadc1;
 extern ADC_HandleTypeDef hadc2;
@@ -62,31 +63,30 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 
 	int cur = read_current_phase();
 
-	/* Invalid hall (-1) floats all phases inside set_phase() */
-	set_phase(cur, duty_a);
-
 	if (cur < 1) {
 		hall_err++;
+		hall_comm_on_edge(cur, 0);	/* invalid hall: floats all phases */
 		return;						/* keep last_phase, do not count */
 	}
 
 	int last = last_phase;
 	last_phase = cur;
 
-	if (last < 1) {
-		return;						/* first valid sample, nothing to compare */
+	/* Signed distance on the 6-state ring: 1 = one step forward, 5 = one back */
+	int step = 0;
+	if (last >= 1) {				/* else first valid sample, nothing to compare */
+		switch ((cur - last + 6) % 6) {
+		case 0:  step =  0; break;		/* same state, edge bounce */
+		case 1:  step = +1; break;
+		case 5:  step = -1; break;
+		case 2:  step = +2; hall_err++; break;	/* one edge missed */
+		case 4:  step = -2; hall_err++; break;	/* one edge missed */
+		default: step =  0; hall_err++; break;	/* 3: direction unknown */
+		}
 	}
 
-	/* Signed distance on the 6-state ring: 1 = one step forward, 5 = one back */
-	int step;
-	switch ((cur - last + 6) % 6) {
-	case 0:  step =  0; break;		/* same state, edge bounce */
-	case 1:  step = +1; break;
-	case 5:  step = -1; break;
-	case 2:  step = +2; hall_err++; break;	/* one edge missed */
-	case 4:  step = -2; hall_err++; break;	/* one edge missed */
-	default: step =  0; hall_err++; break;	/* 3: direction unknown */
-	}
+	/* Commutation: on the edge, or delayed by a fraction of the sector time */
+	hall_comm_on_edge(cur, step);
 
 	count += COUNT_SIGN * step;
 }
